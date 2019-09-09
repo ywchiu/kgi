@@ -1,0 +1,286 @@
+---
+title: "house_predict"
+author: "David Chiu"
+date: "2019/9/9"
+output: html_document
+---
+
+
+## RevoScaleR 的選項
+
+```{r}
+#瀏覽可用RevoScaleR選項
+names(rxOptions())
+#取得當前reportProgress 選項
+rxGetOption("reportProgress")
+#將reportProgress 設為0
+rxOptions(reportProgress = 0)
+```
+
+## 使用RevoScale R 讀取資料
+```{r}
+#設定csv資料來源
+input <- RxTextData(
+  file = "lvr_prices.csv", 
+  delimiter = ",", 
+  quotedDelimiters=TRUE)
+#使用rxImport 將資料匯入 
+rxImport(inData = input,
+         outFile = 'lvr.xdf', 
+         overwrite = TRUE)
+```
+
+## 讀取xdf 檔案資訊
+```{r}
+#設定檔案路徑
+lvr_data <- file.path('/home/largitdata','lvr.xdf')
+#取得資料
+rxGetInfo(lvr_data)
+```
+
+## 取得xdf 變數資訊
+```{r}
+#取得xdf 的變數資訊
+rxGetInfo(lvr_data, getVarInfo = TRUE)
+```
+
+## 指定欄位型態
+```{r}
+lvr_colInfo <- list(
+  list(index = 2, type = "factor"),
+  list(index = 23, type = "numeric")
+)
+input <- RxTextData(file="lvr_prices.csv", delimiter = ",", quotedDelimiters=TRUE, colInfo =lvr_colInfo)
+```
+
+## 使用Transforms 轉換日期資訊
+```{r}
+# 轉換日期資訊
+rxImport(inData= input, 
+         outFile = 'lvr.xdf', 
+         overwrite = TRUE,
+         transforms = list(
+           trading_ymd = as.Date(trading_ymd, format="%Y-%m-%d"),
+           finish_ymd = as.Date(finish_ymd, format="%Y-%m-%d")
+         )
+)
+```
+
+## 使用rxGetVarInfo抓取最高與最低價格
+```{r}
+#設定xdf 檔案路徑
+lvr_data <- file.path('/home/largitdata','lvr.xdf')
+#取得最高價格
+rxGetVarInfo(lvr_data)$total_price$high
+#取得最低價格
+rxGetVarInfo(lvr_data)$total_price$low
+```
+
+
+## 篩選資料並轉回Data Frame
+```{r}
+lvr_df <- rxDataStep(
+  inData=lvr_data,
+  rowSelection = (price_per_sqmeter <= 200000),
+  numRows = 1000,
+  varsToKeep = c('area','address', 'trading_ymd', 'total_price')
+)
+```
+
+## 計算每平方公尺的成交價格
+```{r}
+rxDataStep(
+  inData  = lvr_data, 
+  outFile = lvr_data,
+  transforms = list(
+    new_price = total_price / building_sqmeter
+  ),
+  append = "cols",
+  overwrite = TRUE
+)
+```
+
+## 取得資料的敘述性統計
+```{r}
+#取得總價格的敘述性統計
+rxSummary(formula= ~total_price, data=lvr_data)
+#取得總價格、車位價格與區域的敘述性統計
+rxSummary(
+  formula= ~total_price + parking_price + area, data=lvr_data
+)
+```
+
+##　繪製Histogram
+```{r}
+# 使用rxHistogram繪製總價分佈
+rxHistogram(formula= ~total_price, data=lvr_data)
+```
+
+## 使用Transforms 轉換尺度
+```{r}
+rxHistogram(formula= ~ total_price, 
+            data=lvr_data, 
+            transforms = list(total_price = log10(total_price))
+)	
+```
+
+## 依不同變量繪圖 (Facet)
+```{r}
+#使用rxHistogram做 Facet
+rxHistogram(~ total_price | area, data=lvr_data, transforms=list(total_price= log(total_price)))
+```
+
+## 計算各區的平均價格
+```{r}
+#使用rxCrossTabs 建立列聯表(Contingency Table)
+lvr_tabs <- rxCrossTabs(formula = total_price ~ area, data=lvr_data)
+#使用Print 函式列出各區域平均價格
+print(lvr_tabs, output="means")
+#使用Print 函式列出各區域成交次數
+print(lvr_tabs, output="counts")
+```
+
+## 套用summary 在列聯表上
+```{r}
+#找出總成交金額比例最高的區域
+summary(lvr_tabs)
+#找出平均成交金額比例最高的區域
+summary(lvr_tabs, output="means", type="%")
+```
+
+## 根據購買總價排序
+```{r}
+barplot(sort(lvr_tabs$sums$total_price, decreasing = TRUE))
+```
+
+## 轉換成交易月份
+```{r}
+rxDataStep(
+  inData=lvr_data, 
+  outFile=lvr_data,
+  transforms=list(
+    trading_ym = as.Date(format(as.Date(trading_ymd), '%Y-%m-01'))
+  ),
+  overwrite = TRUE,
+  append="cols"
+)
+```
+
+## 算出區域在不同月份的總成交價與件數
+```{r}
+rxCube(
+  formula = total_price ~ area :trading_ym, 
+  data=lvr_data, 
+  outFile = 'lvr_cube.xdf', 
+  overwrite = TRUE,
+  mean = FALSE,
+  transforms=list(trading_ym = as.factor(trading_ym))
+)
+```
+
+## 繪製大安區的歷史平均成交價
+```{r}
+#設定檔案路徑
+lvr_cube <- file.path('/home/largitdata','lvr_cube.xdf')
+#使用rxLinePlot繪製總成交價變化
+rxLinePlot(formula = total_price ~ trading_ym, 
+           data= lvr_cube, 
+           rowSelection = (
+             area == '大安區' & trading_ym >= '2012-01-01'),
+           transforms=list(trading_ym = as.Date(trading_ym))
+)
+```
+
+
+## 繪製各區域的成交金額變化
+```{r}
+rxLinePlot(formula = total_price ~ trading_ym | area, 
+           data= lvr_cube, 
+           rowSelection = (trading_ym >= '2012-01-01'),
+           transforms=list(trading_ym = as.Date(trading_ym))
+)
+```
+
+## 計算變數相關性
+```{r}
+#使用rxCor 計算相關性
+rxCor(formula=~ building_sqmeter + total_price, data=lvr_data)
+```
+
+## 繪製建物大小與價格的關係
+```{r}
+rxLinePlot(formula = total_price ~ building_sqmeter, 
+           data= lvr_data,
+           type= 'p',		   
+           rowSelection = (
+             trading_ym >= '2012-01-01' &
+               trading_target == '房地(土地+建物)'
+           ),
+           transforms=list(
+             trading_ym = as.Date(trading_ym)
+           )
+)
+```
+
+## 將資料取log 
+```{r}
+rxLinePlot(formula = total_price ~ building_sqmeter, 
+           data= lvr_data,
+           type= 'p',		   
+           rowSelection = (
+             trading_ym >= '2012-01-01' &
+               trading_target == '房地(土地+建物)'
+           ),
+           transforms=list(
+             trading_ym = as.Date(trading_ym),
+             total_price = log(total_price),
+             building_sqmeter = log(building_sqmeter)
+           )
+)
+```
+
+## 增添資料迴歸線
+```{r}
+rxLinePlot(formula = total_price ~ building_sqmeter, 
+           data= lvr_data,
+           type= c('r','p'),		
+           lineColor=c('red'),
+           rowSelection = (
+             trading_ym >= '2012-01-01' &
+               trading_target == '房地(土地+建物)'
+           ),
+           transforms=list(
+             trading_ym = as.Date(trading_ym),
+             total_price = log(total_price),
+             building_sqmeter = log(building_sqmeter)
+           )
+)
+```
+
+## 求出迴歸模型
+```{r}
+lmfit <- rxLinMod(
+  formula=total_price ~ building_sqmeter, 
+  data=lvr_data
+)
+summary(lmfit)
+```
+
+## 產生預測結果
+```{r}
+#使用rxPredict 產生預測結果
+rxPredict(lmfit, data = lvr_data)
+#使用rxGetInfo檢視預測變數
+rxGetInfo(lvr_data, getVarInfo = TRUE)
+```
+
+## 使用rxLogit 建立Logistic Regression 模型
+```{r}
+# 讀取資料
+mortData <- file.path(rxGetOption('sampleDataDir'), 'mortDefaultSmall.xdf')
+rxGetInfo(mortData, getVarInfo = TRUE)
+# 建立logitModel
+logitModel <- rxLogit(formula = default ~ houseAge + F(year) + ccDebt + creditScore + yearsEmploy, data = mortData)
+# 觀看Model Summary
+summary(logitModel)
+```
