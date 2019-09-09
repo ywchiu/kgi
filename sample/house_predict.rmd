@@ -33,7 +33,7 @@ rxImport(inData = input,
 ## 讀取xdf 檔案資訊
 ```{r}
 #設定檔案路徑
-lvr_data <- file.path('/home/largitdata','lvr.xdf')
+lvr_data <- file.path('lvr.xdf')
 #取得資料
 rxGetInfo(lvr_data)
 ```
@@ -69,7 +69,7 @@ rxImport(inData= input,
 ## 使用rxGetVarInfo抓取最高與最低價格
 ```{r}
 #設定xdf 檔案路徑
-lvr_data <- file.path('/home/largitdata','lvr.xdf')
+lvr_data <- file.path('lvr.xdf')
 #取得最高價格
 rxGetVarInfo(lvr_data)$total_price$high
 #取得最低價格
@@ -181,7 +181,7 @@ rxCube(
 ## 繪製大安區的歷史平均成交價
 ```{r}
 #設定檔案路徑
-lvr_cube <- file.path('/home/largitdata','lvr_cube.xdf')
+lvr_cube <- file.path('lvr_cube.xdf')
 #使用rxLinePlot繪製總成交價變化
 rxLinePlot(formula = total_price ~ trading_ym, 
            data= lvr_cube, 
